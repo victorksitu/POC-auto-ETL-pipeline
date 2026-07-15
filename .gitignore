@@ -2,9 +2,9 @@
 .env
 credentials.json
 
-# Python Cache (optional, but good practice to keep things clean)
+# Python Cache
 __pycache__/
 *.pyc
 
-# Downloaded PDFs (so you don't upload weekly reports to GitHub)
+# Downloaded PDFs
 *.pdf

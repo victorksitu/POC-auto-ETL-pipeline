@@ -3,6 +3,7 @@ import gspread
 import requests
 import datetime
 import smtplib
+import pandas as pd
 from dotenv import load_dotenv
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -10,42 +11,59 @@ from email.mime.application import MIMEApplication
 
 load_dotenv()
 
+PIPELINE_COLUMNS = ["record_id", "source", "title", "status", "priority"]
+
 def fetch_github_data():
     api_url = "https://api.github.com/repos/psf/requests/issues"
     print("Fetching open issues from GitHub...")
-    response = requests.get(api_url)
+    response = requests.get(api_url, timeout=10)
+    response.raise_for_status()
     issues_data = response.json()[:3]
 
-    clean_data = []
+    records = []
     for issue in issues_data:
-        clean_data.append([
-            issue['number'],
-            "GitHub",
-            issue['title'],
-            issue['state'],
-            "Medium"
-        ])
-    return clean_data
+        records.append({
+            "record_id": issue["number"],
+            "source": "GitHub",
+            "title": issue["title"],
+            "status": issue["state"],
+            "priority": "Medium",
+        })
 
-def fetch_salesforce_data(): #DUMMY DATA
-    print("Fetching from Salesforce...")
+    return pd.DataFrame.from_records(records, columns=PIPELINE_COLUMNS)
+
+def fetch_salesforce_data():
+    print("Fetching mock CRM data...")
     mock_salesforce_response = [
         {"Id": "006Dp000002Xb", "Name": "Acme Corp Q4 Deal", "StageName": "Negotiation", "Probability": 80},
         {"Id": "006Dp000002Xc", "Name": "Server Upgrade Expansion", "StageName": "Prospecting", "Probability": 20},
         {"Id": "006Dp000002Xd", "Name": "Global License Renewal", "StageName": "Closed Won", "Probability": 100}
     ]
 
-    clean_data = []
+    records = []
     for opp in mock_salesforce_response:
         calculated_priority = "High" if opp['Probability'] >= 80 else "Low"
-        clean_data.append([
-            opp['Id'],
-            "Salesforce CRM",
-            opp['Name'],
-            opp['StageName'],
-            calculated_priority
-        ])
-    return clean_data
+        records.append({
+            "record_id": opp["Id"],
+            "source": "Mock CRM",
+            "title": opp["Name"],
+            "status": opp["StageName"],
+            "priority": calculated_priority,
+        })
+
+    return pd.DataFrame.from_records(records, columns=PIPELINE_COLUMNS)
+
+def normalize_pipeline_data(dataframes):
+    combined = pd.concat(dataframes, ignore_index=True)
+    combined = combined.dropna(subset=["record_id", "source", "title"])
+    combined["record_id"] = combined["record_id"].astype(str).str.strip()
+    combined["source"] = combined["source"].astype(str).str.strip()
+    combined["title"] = combined["title"].astype(str).str.strip()
+    combined["status"] = combined["status"].astype(str).str.strip().str.title()
+    combined["priority"] = combined["priority"].fillna("Unassigned").astype(str).str.strip().str.title()
+    combined = combined.drop_duplicates(subset=["source", "record_id"])
+    combined = combined.sort_values(["source", "priority", "title"])
+    return combined[PIPELINE_COLUMNS]
 
 def send_email(pdf_filename):
     print("Connecting to email server...")
@@ -75,9 +93,10 @@ def send_email(pdf_filename):
 
 def main():
     print("Starting ETL Pipeline:")
-    all_rows = []
-    all_rows.extend(fetch_github_data())
-    all_rows.extend(fetch_salesforce_data())
+    github_df = fetch_github_data()
+    salesforce_df = fetch_salesforce_data()
+    final_df = normalize_pipeline_data([github_df, salesforce_df])
+    all_rows = final_df.values.tolist()
 
     print(f"Total normalized rows ready to load: {len(all_rows)}")
 
